@@ -139,6 +139,7 @@ dmypy.json
 # datasets and projects
 datasets/images/
 datasets/labels/
+datasets/VOCdevkit/
 wandb/
 # tests/
 logs/
