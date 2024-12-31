@@ -1,0 +1,3 @@
+[submodule "comparative-experiment/efficientdet/Yet-Another-EfficientDet-Pytorch"]
+	path = comparative-experiment/efficientdet/Yet-Another-EfficientDet-Pytorch
+	url = https://github.com/xioxiowang/yolov8-paper.git
