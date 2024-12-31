@@ -40,12 +40,12 @@ from ultralytics import YOLO
 # 6. [YOLO系列模型训练结果详细解答！(训练过程的一些疑问，该放哪个文件运行出来的结果、参数量计算量在哪里看..等等问题)](https://www.bilibili.com/video/BV11b421J7Vx/)
 
 if __name__ == '__main__':
-    model = YOLO('ultralytics/cfg/models/v8/yolov8n.yaml')
+    model = YOLO('ultralytics/cfg/models/v10/my-experments/yolov8-all-block.yaml')
     # model.load('yolov8n.pt') # loading pretrain weights
-    model.train(data='/home/hjj/Desktop/dataset/dataset_visdrone/data.yaml',
+    model.train(data='F:/yolov8/ultralytics-main/datasets/voc.yaml',
                 cache=False,
                 imgsz=640,
-                epochs=300,
+                epochs=200,
                 batch=32,
                 close_mosaic=0,
                 workers=4, # Windows下出现莫名其妙卡主的情况可以尝试把workers设置为0

@@ -191,11 +191,11 @@ class Detect_Efficient(nn.Module):
         self.reg_max = 16  # DFL channels (ch[0] // 16 to scale 4/8/12/16/20 for n/s/m/l/x)
         self.no = nc + self.reg_max * 4  # number of outputs per anchor
         self.stride = torch.zeros(self.nl)  # strides computed during build
-        self.stem = nn.ModuleList(nn.Sequential(Conv(x, x, 3), Conv(x, x, 3)) for x in ch) # two 3x3 Conv
+        # self.stem = nn.ModuleList(nn.Sequential(Conv(x, x, 3), Conv(x, x, 3)) for x in ch) # two 3x3 Conv
         # self.stem = nn.ModuleList(nn.Sequential(Conv(x, x, 3, g=x // 16), Conv(x, x, 3, g=x // 16)) for x in ch) # two 3x3 Group Conv
         # self.stem = nn.ModuleList(nn.Sequential(Conv(x, x, 1), Conv(x, x, 3)) for x in ch) # one 1x1 Conv, one 3x3 Conv
         # self.stem = nn.ModuleList(nn.Sequential(EMSConv(x), Conv(x, x, 1)) for x in ch) # one EMSConv, one 1x1 Conv
-        # self.stem = nn.ModuleList(nn.Sequential(EMSConvP(x), Conv(x, x, 1)) for x in ch) # one EMSConvP, one 1x1 Conv
+        self.stem = nn.ModuleList(nn.Sequential(EMSConvP(x), Conv(x, x, 1)) for x in ch) # one EMSConvP, one 1x1 Conv
         # self.stem = nn.ModuleList(nn.Sequential(ScConv(x), Conv(x, x, 1)) for x in ch) # one 1x1 ScConv(CVPR2023), one 1x1 Conv
         # self.stem = nn.ModuleList(nn.Sequential(SCConv(x, x), Conv(x, x, 1)) for x in ch) # one 1x1 ScConv(CVPR2020), one 1x1 Conv
         # self.stem = nn.ModuleList(nn.Sequential(DiverseBranchBlock(x, x, 3), DiverseBranchBlock(x, x, 3)) for x in ch) # two 3x3 DiverseBranchBlock

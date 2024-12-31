@@ -9,8 +9,8 @@ from ultralytics import YOLO
 # 最终论文的参数量和计算量统一以这个脚本运行出来的为准
 
 if __name__ == '__main__':
-    model = YOLO('runs/train/exp/weights/best.pt') # 选择训练好的权重路径
-    model.val(data='/home/hjj/Desktop/dataset/dataset_visdrone/data.yaml',
+    model = YOLO('runs/train/yolov10n-mup/weights/best.pt') # 选择训练好的权重路径
+    model.val(data='F:/yolov8/ultralytics-main/dataset/voc.yaml',
               split='val', # split可以选择train、val、test 根据自己的数据集情况来选择.
               imgsz=640,
               batch=16,

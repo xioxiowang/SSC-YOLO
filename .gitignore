@@ -140,6 +140,9 @@ dmypy.json
 datasets/images/
 datasets/labels/
 datasets/VOCdevkit/
+datasets/VOC/
+VOC/
+myrdd2022/
 wandb/
 # tests/
 logs/

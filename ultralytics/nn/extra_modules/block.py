@@ -33,7 +33,7 @@ from timm.layers import trunc_normal_
 from timm.layers import CondConv2d
 from timm.models import named_apply
 
-__all__ = ['DyHeadBlock', 'DyHeadBlockWithDCNV3', 'Fusion', 'C2f_Faster', 'C3_Faster', 'C3_ODConv', 'C2f_ODConv', 'Partial_conv3', 'C2f_Faster_EMA', 'C3_Faster_EMA', 'C2f_DBB',
+__all__ = ['DyHeadBlock', 'HSPPF', 'DyHeadBlockWithDCNV3', 'Fusion', 'C2f_Faster', 'MUP', 'MDown', 'C3_Faster', 'C3_ODConv', 'C2f_ODConv', 'Partial_conv3', 'C2f_Faster_EMA', 'C3_Faster_EMA', 'C2f_DBB',
            'GSConv', 'GSConvns', 'VoVGSCSP', 'VoVGSCSPns', 'VoVGSCSPC', 'C2f_CloAtt', 'C3_CloAtt', 'SCConv', 'C3_SCConv', 'C2f_SCConv', 'ScConv', 'C3_ScConv', 'C2f_ScConv',
            'LAWDS', 'EMSConv', 'EMSConvP', 'C3_EMSC', 'C3_EMSCP', 'C2f_EMSC', 'C2f_EMSCP', 'RCSOSA', 'C3_KW', 'C2f_KW',
            'C3_DySnakeConv', 'C2f_DySnakeConv', 'DCNv2', 'C3_DCNv2', 'C2f_DCNv2', 'DCNV3_YOLO', 'C3_DCNv3', 'C2f_DCNv3', 'FocalModulation',
@@ -1270,6 +1270,68 @@ class LAWDS(nn.Module):
         return x
     
 ######################################## LAWDS end ########################################
+
+########################################  HSPPF  ##########################################
+
+class MWeight(nn.Module):
+    def __init__(self, c1, c2, reduction_ratio=16):
+        super(MWeight, self).__init__()
+
+        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Sequential(
+            nn.Conv2d(c1, c1 // reduction_ratio, kernel_size=1, stride=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(c1 // reduction_ratio, c1, kernel_size=1, stride=1),
+            nn.Sigmoid()
+        )
+        self.cv = nn.Conv2d(c1, c2, kernel_size=1, stride=1, padding=0)
+
+    def forward(self, x):
+        x = x.to(next(self.parameters()).device)
+        b, c, _, _ = x.size()  # 获取输入特征的尺寸
+        y = self.avg_pool(x)
+        weights = self.fc(y)
+
+        y = x * weights.expand_as(x)  # 使用权重调整输入特征
+        return self.cv(y)
+
+class HSPPF(nn.Module):#HSPPF12
+    """Spatial Pyramid Pooling - Fast (SPPF) layer for YOLOv5 by Glenn Jocher."""
+
+    def __init__(self, c1, c2, k=5):
+        """
+        Initializes the SPPF layer with given input/output channels and kernel size.
+
+        This module is equivalent to SPP(k=(5, 9, 13)).
+        """
+        super().__init__()
+        c_ = c1 // 2  # hidden channels
+        self.cv1 = Conv(c1, c_, 1, 1)
+        self.cv2 = Conv(c_, c_, 3, 1)
+
+        # self.cv2 = Conv(c_ * 7, c2, 1, 1)
+        self.cv3 = Conv(c_, c_, 1, 1)
+        self.cv4 = Conv(c1, c_, 1, 1)
+        self.cv5 = Conv(c_, c_, 3, 1)
+        self.cv6 = Conv(c_, c_, 1, 1)
+        self.se = MWeight(c_ * 5, c_, 16)
+        # self.cv6 = Conv(c1, c1, 1, 1)
+        self.cv7 = Conv(c_ * 3, c2, 1, 1)
+        # self.cv8 = Conv(c2, c2)
+        self.EPSA = EPSABlock(c2, c2)
+        self.m = nn.MaxPool2d(kernel_size=k, stride=1, padding=k // 2)
+
+    def forward(self, x):
+        """Forward pass through Ghost Convolution block."""
+        x1 = self.cv3(self.cv2(self.cv1(x)))
+        # x1, x2 = x.chunk(2, 1)
+        x2 = self.cv6(self.cv5(self.cv4(x)))
+        y1 = self.m(x1)
+        y2 = self.m(y1)
+        z = self.se(torch.cat((x1, x2, y1, y2, self.m(y2)), 1))
+        return self.EPSA(self.cv7(torch.cat((x, z), 1)))
+    
+####################################  HSPPF END #########################################################
 
 ######################################## EMSConv+EMSConvP begin ########################################
 
@@ -4933,6 +4995,220 @@ class C2f_RVB_EMA(C2f):
         self.m = nn.ModuleList(RepViTBlock_EMA(self.c, self.c) for _ in range(n))
 
 ######################################## RepViT end ########################################
+
+########################################## mup and mdown start ##################################
+import torch.nn as nn
+# from models.common import *
+
+class SEWeightModule(nn.Module):
+
+    def __init__(self, channels, reduction=16):
+        super(SEWeightModule, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc1 = nn.Conv2d(channels, channels//reduction, kernel_size=1, padding=0)
+        self.relu = nn.ReLU(inplace=True)
+        self.fc2 = nn.Conv2d(channels//reduction, channels, kernel_size=1, padding=0)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        out = self.avg_pool(x)
+        out = self.fc1(out)
+        out = self.relu(out)
+        out = self.fc2(out)
+        weight = self.sigmoid(out)
+
+        return weight
+
+import torch
+
+import math
+
+
+def conv(in_planes, out_planes, kernel_size=3, stride=1, padding=1, dilation=1, groups=1):
+    """standard convolution with padding"""
+    return nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride,
+                     padding=padding, dilation=dilation, groups=groups, bias=False)
+
+def conv1x1(in_planes, out_planes, stride=1):
+    """1x1 convolution"""
+    return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
+
+class MGSConv(nn.Module):
+    # GSConv https://github.com/AlanLi1997/slim-neck-by-gsconv
+    def __init__(self, c1, c2, k=1, s=1, g=1,  act=True):
+        super().__init__()
+        c_ = c2 // 2
+        self.cv1 = Conv(c1, c_, k, s, None, g,  act=True)
+        self.cv2 = Conv(c_, c_, 5, 1, None, c_, act=True)
+    def forward(self, x):
+        x1 = self.cv1(x)
+        x2 = torch.cat((x1, self.cv2(x1)), 1)
+        # shuffle
+        b, n, h, w = x2.data.size()
+        b_n = b * n // 2
+        y = x2.reshape(b_n, 2, h * w)
+        y = y.permute(1, 0, 2)
+        y = y.reshape(2, -1, n // 2, h, w)
+        return torch.cat((y[0], y[1]), 1)
+
+class PSAModule(nn.Module):
+
+    def __init__(self, inplans, planes, conv_kernels=[3, 5, 7, 9], stride=1, conv_groups=[1, 4, 8, 16]):
+        super(PSAModule, self).__init__()
+        self.conv_1 = conv(inplans, planes//4, kernel_size=conv_kernels[0], padding=conv_kernels[0]//2,
+                            stride=stride, groups=conv_groups[0])
+        self.conv_2 = conv(inplans, planes//4, kernel_size=conv_kernels[1], padding=conv_kernels[1]//2,
+                            stride=stride, groups=conv_groups[1])
+        self.conv_3 = conv(inplans, planes//4, kernel_size=conv_kernels[2], padding=conv_kernels[2]//2,
+                            stride=stride, groups=conv_groups[2])
+        self.conv_4 = conv(inplans, planes//4, kernel_size=conv_kernels[3], padding=conv_kernels[3]//2,
+                            stride=stride, groups=conv_groups[3])
+        self.se = SEWeightModule(planes // 4)
+        self.split_channel = planes // 4
+        self.softmax = nn.Softmax(dim=1)
+
+    def forward(self, x):
+        batch_size = x.shape[0]
+        x1 = self.conv_1(x)
+        x2 = self.conv_2(x)
+        x3 = self.conv_3(x)
+        x4 = self.conv_4(x)
+
+        feats = torch.cat((x1, x2, x3, x4), dim=1)
+        feats = feats.view(batch_size, 4, self.split_channel, feats.shape[2], feats.shape[3])
+
+        x1_se = self.se(x1)
+        x2_se = self.se(x2)
+        x3_se = self.se(x3)
+        x4_se = self.se(x4)
+
+        x_se = torch.cat((x1_se, x2_se, x3_se, x4_se), dim=1)
+        attention_vectors = x_se.view(batch_size, 4, self.split_channel, 1, 1)
+        attention_vectors = self.softmax(attention_vectors)
+        feats_weight = feats * attention_vectors
+        for i in range(4):
+            x_se_weight_fp = feats_weight[:, i, :, :]
+            if i == 0:
+                out = x_se_weight_fp
+            else:
+                out = torch.cat((x_se_weight_fp, out), 1)
+
+        a = 1
+
+        return out
+
+class EPSABlock(nn.Module):
+    expansion = 1
+
+    def __init__(self, inplanes, planes, stride=1, downsample=None, norm_layer=None, conv_kernels=[3, 5, 7, 9],
+                 conv_groups=[1, 4, 8, 16]):
+        super(EPSABlock, self).__init__()
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm2d
+        # Both self.conv2 and self.downsample layers downsample the input when stride != 1
+        self.conv1 = conv1x1(inplanes, planes)
+        self.bn1 = norm_layer(planes)
+        self.conv2 = PSAModule(planes, planes, stride=stride, conv_kernels=conv_kernels, conv_groups=conv_groups)
+        self.bn2 = norm_layer(planes)
+        self.conv3 = conv1x1(planes, planes * self.expansion)
+        self.bn3 = norm_layer(planes * self.expansion)
+        self.relu = nn.ReLU(inplace=True)
+        self.downsample = downsample
+        self.stride = stride
+        self.Conv1 = MGSConv(inplanes, planes, 3, 1)
+
+    def forward(self, x):
+        # identity = x
+        x = self.Conv1(x)
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        # out += identity
+        out = self.relu(out)
+        return out
+
+class MUP(nn.Module):
+    def __init__(self, c, _):
+        super(MUP, self).__init__()
+        self.cv1 = Conv(c, 4 * c, 1)
+        self.up = nn.Upsample(None, 2, 'nearest')
+        self.cv2 = Conv(c, c, 3)
+        self.cv3 = nn.ConvTranspose2d(4 * c, c, kernel_size=4, stride=2, padding=1)
+
+    def forward(self, x):
+        y = self.up(x)
+        x = self.cv2(x)
+        x = self.cv1(x)
+        x = self.cv3(x)
+        z = x + y
+
+        return z
+class SWBlock(nn.Module):
+    def __init__(self, c, reduction_ratio=16):
+        super(SWBlock, self).__init__()
+
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Conv2d(4 * c, 4 * c // reduction_ratio, kernel_size=1, stride=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(4 * c // reduction_ratio, 4 * c, kernel_size=1, stride=1),
+            nn.Sigmoid()
+        )
+        self.cv = nn.Conv2d(4 * c, c, kernel_size=1, stride=1, padding=0)
+
+    def forward(self, x):
+        x = x.to(next(self.parameters()).device)
+        b, c, _, _ = x.size() 
+        y = self.avg_pool(x).view(b, c, 1, 1)
+        weights = self.fc(y)
+
+        y = x * weights.expand_as(x)  
+        return self.cv(y)
+
+class Split_Feature(nn.Module):
+    def __init__(self, c):
+        super().__init__()
+        self.sw = SWBlock(c)
+
+    def forward(self, input_feature):
+        N, C, H, W = input_feature.shape
+        output_feature = input_feature.unfold(2, 2, 2).unfold(3, 2, 2)
+        output_feature = output_feature.permute(0, 2, 3, 1, 4, 5).reshape(N, H//2, W//2, 4*C)
+        output_feature = self.sw(output_feature.permute(0, 3, 1, 2))
+        return output_feature
+
+
+class MDown(nn.Module):
+    def __init__(self, c1, c2):
+        super().__init__()
+        self.cv = Conv(c1, c1, 3, 1)
+        self.cv3 = Conv(c1, c2, 3, 2)
+        self.cv1 = Conv(c1, c2, 3, 2, 1)
+        self.cv2 = Conv(c1, c2, 1, 1, 0)
+        self.sf = Split_Feature(c2)
+        self.se = EPSABlock(c2, c2)
+
+    def forward(self, x):
+        y = self.cv3(x)
+        x = self.cv(x)
+        x1 = self.cv1(x)
+        x2 = self.sf(x)
+        x = x1 + x2
+        z = y + x
+        return self.se(z)
+######################################## mup and mydown end ####################################################################
 
 ######################################## Dynamic Group Convolution Shuffle Transformer start ########################################
 
