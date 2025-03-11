@@ -39,22 +39,23 @@ from ultralytics import YOLO
 # 5. [深度学习实验部分常见疑问解答三！(怎么判断模型是否收敛？模型过拟合怎么办？)](https://www.bilibili.com/video/BV11S421d76P/)
 # 6. [YOLO系列模型训练结果详细解答！(训练过程的一些疑问，该放哪个文件运行出来的结果、参数量计算量在哪里看..等等问题)](https://www.bilibili.com/video/BV11b421J7Vx/)
 
-if __name__ == '__main__':
-    model = YOLO('ultralytics/cfg/models/v10/my-experments/yolov8-all-block.yaml')
+if __name__ == '__main__': 
+    # model = YOLO('ultralytics/cfg/models/my-experments/rdd2022-to-do/yolov8.yaml') ##exp2
+    model = YOLO('ultralytics/cfg/models/my-experments/todo/yolov8-MFConv.yaml')   ##exp
     # model.load('yolov8n.pt') # loading pretrain weights
-    model.train(data='F:/yolov8/ultralytics-main/datasets/voc.yaml',
+    model.train(data='F:/yolov8/ultralytics-main/datasets/myrdd2022.yaml',
                 cache=False,
                 imgsz=640,
                 epochs=200,
                 batch=32,
                 close_mosaic=0,
-                workers=4, # Windows下出现莫名其妙卡主的情况可以尝试把workers设置为0
+                workers=4, # Windows下出现莫名其妙卡主的情况可以尝试把workers设置为0   
                 # device='0',
-                optimizer='SGD', # using SGD
+                optimizer='SGD', # using SGD  
                 # patience=0, # set 0 to close earlystop.
                 # resume=True, # 断点续训,YOLO初始化时选择last.pt,例如YOLO('last.pt')
                 # amp=False, # close amp
                 # fraction=0.2,
                 project='runs/train',
-                name='exp',
+                name='yolov8-MFConv2',     
                 )
